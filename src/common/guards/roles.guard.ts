@@ -1,34 +1,57 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '../decorators/roles.decorator';
-import { TenantRole } from '../../memberships/entities/membership.entity';
+import { HIERARCHY_KEY, PROFESSION_KEY } from '../decorators/roles.decorator';
+import { HierarchyLevel, Profession } from '../enums/roles.enum';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<TenantRole[]>(ROLES_KEY, [
+    // 1. Endpoint'in istediği Rütbeleri ve Meslekleri oku
+    const requiredHierarchies = this.reflector.getAllAndOverride<HierarchyLevel[]>(HIERARCHY_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    
-    // Endpoint'te rol şartı yoksa geç
-    if (!requiredRoles) {
+
+    const requiredProfessions = this.reflector.getAllAndOverride<Profession[]>(PROFESSION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    // Eğer endpoint'te hiçbir kısıtlama yoksa direkt geçiş ver
+    if (!requiredHierarchies && !requiredProfessions) {
       return true;
     }
 
     const { user } = context.switchToHttp().getRequest();
 
-    // Token içinde tenant bilgisi ve rolü var mı? (Switch Tenant yapınca gelecek)
-    if (!user || !user.activeTenantId || !user.activeRole) {
-       throw new ForbiddenException('Bu işlem için bir organizasyon seçmiş olmanız gerekir.');
+    // 2. Kullanıcının aktif bir tenant'ı, rütbesi ve mesleği var mı?
+    // Not: Auth sisteminde token payload'ına 'activeHierarchy' ve 'activeProfession' eklemen gerekecek.
+    if (!user || !user.activeTenantId || !user.activeHierarchy || !user.activeProfession) {
+       throw new ForbiddenException('Bu işlem için bir çalışma alanı (Tenant) seçmiş olmanız gerekir.');
     }
 
-    // Rol yetiyor mu?
-    const hasRole = requiredRoles.includes(user.activeRole);
-    if (!hasRole) {
-        throw new ForbiddenException('Bu işlem için yetkiniz yetersiz.');
+    // 3. Hiyerarşi (Rütbe) Kontrolü (Eğer endpoint rütbe şartı koşmuşsa)
+    if (requiredHierarchies && requiredHierarchies.length > 0) {
+      // OWNER her zaman her şeyi yapabilir (Sistemin mutlak hakimi)
+      if (user.activeHierarchy !== HierarchyLevel.OWNER) {
+        const hasHierarchy = requiredHierarchies.includes(user.activeHierarchy);
+        if (!hasHierarchy) {
+          throw new ForbiddenException('Bu işlem için yönetsel yetkiniz (Rütbeniz) yetersiz.');
+        }
+      }
+    }
+
+    // 4. Meslek (Disiplin) Kontrolü (Eğer endpoint meslek şartı koşmuşsa)
+    if (requiredProfessions && requiredProfessions.length > 0) {
+      // OWNER ve ADMIN'ler genellikle her disiplini görebilir (İsteğe bağlı kısıtlayabilirsin)
+      if (user.activeHierarchy !== HierarchyLevel.OWNER && user.activeHierarchy !== HierarchyLevel.ADMIN) {
+        const hasProfession = requiredProfessions.includes(user.activeProfession);
+        if (!hasProfession) {
+          throw new ForbiddenException('Bu işlem sizin uzmanlık/departman alanınızda bulunmuyor.');
+        }
+      }
     }
 
     return true;

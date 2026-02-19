@@ -113,13 +113,13 @@ export class AuthService {
     // --- 2FA KAPALIYSA NORMAL AKIŞA DEVAM ET ---
 
     // --- DEĞİŞİKLİK BAŞLANGICI: Tenant Listesini Çek ---
-    // Kullanıcının üye olduğu şirketleri çekiyoruz
     const memberships = await this.dataSource.getRepository(MembershipEntity).find({
       where: { user_id: user.id },
       relations: ['tenant'],
       select: {
         id: true,
-        role: true,
+        hierarchy_level: true, // <-- YENİ
+        profession: true,      // <-- YENİ
         tenant: {
           id: true,
           name: true,
@@ -133,7 +133,8 @@ export class AuthService {
       tenantId: m.tenant.id,
       name: m.tenant.name,
       slug: m.tenant.slug,
-      role: m.role,
+      hierarchyLevel: m.hierarchy_level, // <-- YENİ
+      profession: m.profession,          // <-- YENİ
     }));
 
     // Session oluşturma (Mevcut kodunu çağırıyoruz)
@@ -158,12 +159,12 @@ export class AuthService {
       throw new ForbiddenException('Bu organizasyona erişim yetkiniz yok.');
     }
 
-    // Yeni Payload (Aktif Tenant ve Rol içeriyor)
+    // YENİ Payload (Aktif Tenant, Rütbe ve Meslek içeriyor)
     const payload = {
       sub: userId,
-      // JWT içine artık hangi şirkette hangi rolde olduğunu gömüyoruz
       activeTenantId: membership.tenant_id,
-      activeRole: membership.role,
+      activeHierarchy: membership.hierarchy_level, // <-- YENİ
+      activeProfession: membership.profession,     // <-- YENİ
     };
 
     // Yeni tokenlar üretilir (Süreleri taze)
@@ -175,7 +176,8 @@ export class AuthService {
       accessToken,
       activeTenant: {
         id: membership.tenant_id,
-        role: membership.role,
+        hierarchyLevel: membership.hierarchy_level, // <-- YENİ
+        profession: membership.profession,          // <-- YENİ
       },
     };
   }

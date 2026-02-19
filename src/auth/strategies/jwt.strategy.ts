@@ -16,14 +16,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      // DÜZELTME BURADA:
-      // 'getOrThrow' kullanıyoruz. Eğer .env'de yoksa uygulama açılırken patlar (Doğrusu budur).
       secretOrKey: configService.getOrThrow<string>('JWT_SECRET'),
     });
   }
 
   async validate(payload: any) {
-    // Payload: { sub: 'uuid', email: '...', family: '...', activeTenantId?: '...', activeRole?: '...' }
+    // Payload: { sub: 'uuid', email: '...', family: '...', activeTenantId?: '...', activeHierarchy?: '...', activeProfession?: '...' }
     
     const user = await this.userRepository.findOne({
       where: { id: payload.sub },
@@ -39,12 +37,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     // --- DEĞİŞİKLİK BURADA ---
-    // User objesini ve Token'dan gelen aktif tenant bilgilerini birleştirip dönüyoruz.
-    // Artık request.user.activeTenantId diyerek erişilebilecek.
     return { 
-        ...user, // Mevcut id, email, username bilgilerini koru
+        ...user, 
         activeTenantId: payload.activeTenantId || null,
-        activeRole: payload.activeRole || null
+        activeHierarchy: payload.activeHierarchy || null,   // <-- YENİ
+        activeProfession: payload.activeProfession || null  // <-- YENİ
     }; 
   }
 }

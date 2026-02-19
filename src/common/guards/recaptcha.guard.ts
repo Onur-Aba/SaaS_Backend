@@ -12,25 +12,30 @@ export class RecaptchaGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const { recaptchaToken } = request.body;
     
-    // IP Adresini al (Proxy arkasındaysan x-forwarded-for, yoksa socket ip)
+    // IP Adresini al
     const clientIp = request.headers['x-forwarded-for'] || request.socket.remoteAddress;
 
-    // 1. TEST ORTAMI BYPASS (Geliştirme yaparken bizi yormasın)
+    // 1. TEST ORTAMI BYPASS
     const isDev = this.configService.get('NODE_ENV') === 'development';
     if (isDev && recaptchaToken === 'TEST_TOKEN') {
       this.logger.debug('Test ortamı için Recaptcha bypass edildi.');
       return true;
     }
 
+    // 2. TOKEN YOKSA FRONTEND'İ TETİKLE
+    // Frontend ilk isteği tokensiz atar. Eğer token yoksa, özel bir kod ile reddederiz.
+    // Frontend bu kodu (CAPTCHA_REQUIRED) görünce görünmez captcha'yı çalıştırır.
     if (!recaptchaToken) {
-      throw new ForbiddenException('Güvenlik doğrulaması (Captcha) eksik.');
+      throw new ForbiddenException({
+        message: 'Şüpheli işlem algılandı. Lütfen güvenlik doğrulamasını tamamlayın.',
+        code: 'CAPTCHA_REQUIRED'
+      });
     }
 
-    // 2. GOOGLE'A SOR (IP ADRESİNİ DE GÖNDERİYORUZ!)
+    // 3. GOOGLE V2 DOĞRULAMASI
     const secretKey = this.configService.get('RECAPTCHA_SECRET_KEY');
     
     try {
-      // Google API'sine remoteip parametresini eklemek VPN tespitini güçlendirir.
       const response = await axios.post(
         `https://www.google.com/recaptcha/api/siteverify`,
         null,
@@ -38,23 +43,25 @@ export class RecaptchaGuard implements CanActivate {
           params: {
             secret: secretKey,
             response: recaptchaToken,
-            remoteip: clientIp, // <-- Kritik Nokta: Google'a IP'yi ispiyonluyoruz
+            remoteip: clientIp,
           },
         }
       );
 
-      const { success, score, action } = response.data;
+      // v2 Invisible sürümünde 'score' ve 'action' yoktur. Sadece 'success' döner.
+      const { success, "error-codes": errorCodes } = response.data;
 
-      // 3. SKOR KONTROLÜ
-      // 1.0 = İnsan, 0.0 = Bot
-      // 0.5 altı genelde şüphelidir (VPN veya Bot).
-      if (!success || score < 0.5) {
-        this.logger.warn(`Bot aktivitesi engellendi! IP: ${clientIp}, Skor: ${score}`);
-        throw new ForbiddenException('Şüpheli trafik algılandı. Lütfen VPN kapatıp tekrar deneyin.');
+      if (!success) {
+        this.logger.warn(`Bot/VPN aktivitesi engellendi! IP: ${clientIp}, Hatalar: ${errorCodes || 'Bilinmiyor'}`);
+        throw new ForbiddenException('Güvenlik doğrulaması başarısız. Lütfen tekrar deneyin.');
       }
 
       return true;
     } catch (error) {
+      // Bizim fırlattığımız özel ForbiddenException (CAPTCHA_REQUIRED) hatalarını ezmemek için kontrol:
+      if (error instanceof ForbiddenException) {
+        throw error; 
+      }
       this.logger.error('Recaptcha servisine ulaşılamadı:', error);
       throw new ForbiddenException('Güvenlik servisi şu an yanıt vermiyor.');
     }

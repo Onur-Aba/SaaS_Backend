@@ -12,10 +12,11 @@ import * as argon2 from 'argon2';
 
 import { InvitationEntity } from './entities/invitation.entity';
 import { TenantEntity } from '../tenants/entities/tenant.entity';
-import { MembershipEntity, TenantRole } from './entities/membership.entity'; 
+import { MembershipEntity } from './entities/membership.entity'; 
 import { UserEntity, AccountStatus } from '../users/entities/user.entity'; 
 import { OutboxService } from '../outbox/outbox.service';
 import { AcceptInviteDto } from './dto/accept-invite.dto'; 
+import { HierarchyLevel, Profession } from '../common/enums/roles.enum';
 
 @Injectable()
 export class MembershipsService {
@@ -35,9 +36,10 @@ export class MembershipsService {
     inviterId: string,
     tenantId: string, 
     email: string, 
-    role: TenantRole
+    hierarchyLevel: HierarchyLevel,
+    profession: Profession
   ) {
-    // --- 1. ŞİRKET VE PLAN KONTROLÜ (GELİR MODELİ KORUMASI) ---
+    // 1. ŞİRKET VE PLAN KONTROLÜ
     const tenant = await this.tenantRepo.findOne({
         where: { id: tenantId },
         relations: ['subscription', 'subscription.plan']
@@ -45,13 +47,10 @@ export class MembershipsService {
 
     if (!tenant) throw new NotFoundException('Şirket bulunamadı.');
 
-    // 2. Limit Kontrolü
     const currentMemberCount = await this.membershipRepo.count({
         where: { tenant_id: tenantId }
     });
 
-    // Plan özelliklerinde 'max_users' anahtarı var mı? Yoksa varsayılan 1 olsun.
-    // (tenant.subscription?.plan?.features kısmına güvenli erişim)
     const maxUsers = tenant.subscription?.plan?.features['max_users'] || 1;
 
     if (currentMemberCount >= maxUsers) {
@@ -59,7 +58,6 @@ export class MembershipsService {
             `Paket limitiniz (${maxUsers} kullanıcı) doldu. Yeni kullanıcı eklemek için paketinizi yükseltin.`
         );
     }
-    // ------------------------------------------------------------
 
     // 3. Daha önce davet edilmiş mi?
     const existingInvite = await this.invitationRepo.findOne({
@@ -78,11 +76,12 @@ export class MembershipsService {
     // 4. Davet Oluştur
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 Gün geçerli
+    expiresAt.setDate(expiresAt.getDate() + 7);
 
     const invitation = this.invitationRepo.create({
       email,
-      role,
+      hierarchy_level: hierarchyLevel,
+      profession: profession,
       token,
       expires_at: expiresAt,
       tenant_id: tenantId,
@@ -96,8 +95,9 @@ export class MembershipsService {
       type: 'SEND_INVITATION_EMAIL',
       payload: {
         email,
-        inviteLink: `https://app.senin-saas.com/accept-invite?token=${token}`,
-        role
+        inviteLink: `http://localhost:3001/accept-invite?token=${token}`,
+        hierarchyLevel,
+        profession
       }
     });
 
@@ -108,34 +108,18 @@ export class MembershipsService {
   async acceptInvite(acceptInviteDto: AcceptInviteDto) {
     const { token, password, username } = acceptInviteDto;
 
-    // 1. Daveti Bul
     const invitation = await this.invitationRepo.findOne({
       where: { token },
-      relations: ['tenant'], // Hangi şirkete davet edildiğini bilmemiz lazım
+      relations: ['tenant'],
     });
 
-    if (!invitation) {
-      throw new NotFoundException('Davet bulunamadı veya geçersiz.');
-    }
+    if (!invitation) throw new NotFoundException('Davet bulunamadı veya geçersiz.');
+    if (invitation.is_revoked) throw new ForbiddenException('Bu davet iptal edilmiş.');
+    if (invitation.accepted_at) throw new ForbiddenException('Bu davet zaten kullanılmış.');
+    if (invitation.expires_at < new Date()) throw new ForbiddenException('Davet süresi dolmuş.');
 
-    // 2. Kontroller (Süresi dolmuş mu? İptal edilmiş mi?)
-    if (invitation.is_revoked) {
-      throw new ForbiddenException('Bu davet iptal edilmiş.');
-    }
-
-    if (invitation.accepted_at) {
-      throw new ForbiddenException('Bu davet zaten kullanılmış.');
-    }
-
-    if (invitation.expires_at < new Date()) {
-      throw new ForbiddenException('Davet süresi dolmuş.');
-    }
-
-    // 3. Kullanıcı Sistemde Var mı?
     let user = await this.userRepo.findOne({ where: { email: invitation.email } });
 
-    // SENARYO A: Kullanıcı Yoksa -> OLUŞTUR
-    // (Yeni kullanıcı kaydı + Şirket üyeliği)
     if (!user) {
       if (!password) {
         throw new BadRequestException('Yeni hesap oluşturmak için şifre belirlemelisiniz.');
@@ -143,39 +127,34 @@ export class MembershipsService {
 
       user = new UserEntity();
       user.email = invitation.email;
-      // Username yoksa emailin başını al (örn: ahmet@mail.com -> ahmet)
       user.username = username || invitation.email.split('@')[0]; 
       user.password_hash = await argon2.hash(password);
-      user.account_status = AccountStatus.ACTIVE; // Davetle geldiği için direkt aktif
+      user.account_status = AccountStatus.ACTIVE; 
       user.security_stamp = crypto.randomUUID(); 
 
       await this.userRepo.save(user);
     }
 
-    // SENARYO B: Kullanıcı Varsa (Veya yeni oluşturulduysa) -> MEMBERSHIP OLUŞTUR
-
-    // Önce zaten üye mi diye bak?
     const existingMembership = await this.membershipRepo.findOne({
       where: { user_id: user.id, tenant_id: invitation.tenant_id }
     });
 
     if (existingMembership) {
-      // Zaten üyeyse sadece daveti kapat (Tekrar eklemeye çalışma)
       invitation.accepted_at = new Date();
       await this.invitationRepo.save(invitation);
       return { message: 'Zaten bu şirketin üyesisiniz.' };
     }
 
-    // Üyelik Kaydı (Membership)
+    // YENİ: Davetteki Rütbe ve Meslek bilgileri ile üyeliği başlat
     const membership = new MembershipEntity();
     membership.user = user;
     membership.tenant = invitation.tenant;
-    membership.role = invitation.role;
-    membership.is_accepted = true; // Daveti kabul ettiği için true
+    membership.hierarchy_level = invitation.hierarchy_level;
+    membership.profession = invitation.profession;
+    membership.is_accepted = true;
 
     await this.membershipRepo.save(membership);
 
-    // 4. Daveti "Kullanıldı" Olarak İşaretle
     invitation.accepted_at = new Date();
     await this.invitationRepo.save(invitation);
 

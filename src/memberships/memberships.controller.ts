@@ -1,8 +1,9 @@
 import { Controller, Post, Body, UseGuards, Request } from '@nestjs/common';
 import { MembershipsService } from './memberships.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TenantRole } from './entities/membership.entity';
-import { AcceptInviteDto } from './dto/accept-invite.dto'; // <-- DTO İmport Edildi
+// Eski TenantRole silindi, yeni Enumlar eklendi:
+import { HierarchyLevel, Profession } from '../common/enums/roles.enum'; 
+import { AcceptInviteDto } from './dto/accept-invite.dto';
 
 @Controller('memberships')
 export class MembershipsController {
@@ -14,15 +15,13 @@ export class MembershipsController {
     @Request() req,
     @Body('tenantId') tenantId: string,
     @Body('email') email: string,
-    @Body('role') role: TenantRole,
+    @Body('hierarchyLevel') hierarchyLevel: HierarchyLevel, // <-- YENİ
+    @Body('profession') profession: Profession,             // <-- YENİ
   ) {
-    // NOT: İleride burada kullanıcının o tenant'ta yetkisi var mı diye 
-    // kontrol eden bir Guard (RolesGuard) ekleyeceğiz.
-    return this.membershipsService.inviteUser(req.user.id, tenantId, email, role);
+    // Servise artık iki ayrı parametre gönderiyoruz
+    return this.membershipsService.inviteUser(req.user.id, tenantId, email, hierarchyLevel, profession);
   }
 
-  // YENİ ENDPOINT: Login gerektirmez! (Public)
-  // Kullanıcı davet linkine tıkladığında bu endpoint çalışır.
   @Post('accept')
   async acceptInvite(@Body() acceptInviteDto: AcceptInviteDto) {
     return this.membershipsService.acceptInvite(acceptInviteDto);
