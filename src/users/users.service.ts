@@ -32,6 +32,11 @@ export class UsersService {
       user.password_hash = hashedPassword;
       user.account_status = AccountStatus.UNVERIFIED;
 
+      // --- YENİ: FREE PLAN OTOMATİK ATAMASI ---
+      // Veritabanındaki "Free" paketinin ID'si (Senin verdiğin ID)
+      user.plan_id = '019c67de-ee4d-7665-8c53-f6b80aef7ef6'; 
+      // ----------------------------------------
+
       // 1. Doğrulama Token'ı Üret (24 saat geçerli)
       const verificationToken = crypto.randomBytes(32).toString('hex');
       const verificationTokenHash = crypto

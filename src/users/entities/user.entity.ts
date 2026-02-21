@@ -1,10 +1,11 @@
-import { Entity, Column, Index, OneToOne, OneToMany } from 'typeorm';
+import { Entity, Column, Index, OneToOne, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
 import { AbstractBaseEntity } from '../../common/abstract.entity';
 import { ProfileEntity } from './profile.entity';
 import { SessionEntity } from '../../auth/entities/session.entity';
 import { AuditLogEntity } from '../../audit_logs/entities/audit_log.entity';
 // YENİ: Membership Entity import edildi
 import { MembershipEntity } from '../../memberships/entities/membership.entity';
+import { PlanEntity } from '../../subscriptions/entities/plan.entity';
 
 export enum AccountStatus {
   UNVERIFIED = 'UNVERIFIED',
@@ -68,6 +69,17 @@ export class UserEntity extends AbstractBaseEntity {
 
   @OneToMany(() => AuditLogEntity, (log) => log.user)
   audit_logs!: AuditLogEntity[];
+
+  // --- SAAS DÖNÜŞÜMÜ İÇİN YENİ EKLENEN PLAN ALANI ---
+  
+  // Kullanıcının sahip olduğu planın ID'sini tutar
+  @Column({ type: 'uuid', nullable: true }) 
+  plan_id!: string;
+
+  // Plan tablosu ile ilişki (Dashboard'da detayları çekmek için)
+  @ManyToOne(() => PlanEntity)
+  @JoinColumn({ name: 'plan_id' })
+  plan!: PlanEntity;
 
   // --- SAAS DÖNÜŞÜMÜ İÇİN YENİ ALANLAR ---
 

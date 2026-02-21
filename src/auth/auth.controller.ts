@@ -48,11 +48,13 @@ export class AuthController {
   }
 
   // --- MEVCUT ENDPOINTLER ---
-  @UseGuards(JwtAuthGuard) // KİLİT BURADA! Token yoksa içeri almaz.
+// --- MEVCUT ENDPOINTLER ---
+  @UseGuards(JwtAuthGuard) 
   @Get('me')
-  getProfile(@Request() req) {
-    // req.user, JwtStrategy içindeki validate metodundan geliyor.
-    return req.user;
+  async getProfile(@Request() req) {
+    // req.user sadece ID ve Email barındırır. 
+    // Biz dashboard için gerekli olan tüm ilişkili tabloları (Sessions, Tenants, Plan) gerçek zamanlı çekiyoruz!
+    return this.authService.getDashboardData(req.user.id);
   }
 
   @UseGuards(JwtAuthGuard) // Kimlik doğrulama zorunlu

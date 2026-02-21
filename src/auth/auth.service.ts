@@ -615,4 +615,43 @@ export class AuthService {
       `🗑️ [CRON] Temizlik tamamlandı. Silinen oturum sayısı: ${result.affected}`,
     );
   }
+  // --- GERÇEK DASHBOARD VERİSİNİ GETİR ---
+async getDashboardData(userId: string) {
+    // 1. GERÇEK OTURUMLAR
+    const sessions = await this.sessionRepository.find({
+      where: { user_id: userId, is_revoked: false },
+      order: { last_active_at: 'DESC' }
+    });
+
+    // 2. GERÇEK ŞİRKETLER
+    const memberships = await this.dataSource.getRepository(MembershipEntity).find({
+      where: { user_id: userId },
+      relations: ['tenant']
+    });
+
+    // 3. KULLANICIYI VE PLANINI ÇEK (Yeni mimari)
+    const userWithPlan = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['plan'] // UserEntity'ye eklediğimiz plan ilişkisini çekiyoruz
+    });
+
+    // Plan detaylarını JSONB (features) içinden çıkarıyoruz
+    const currentPlan = userWithPlan?.plan ? {
+      name: userWithPlan.plan.name,
+      max_tenants: userWithPlan.plan.features?.max_tenants || 1
+    } : { name: 'FREE', max_tenants: 1 };
+
+    return {
+      id: userId,
+      plan: currentPlan,
+      tenants: memberships.map(m => m.tenant),
+      sessions: sessions.map(s => ({
+        id: s.id,
+        userAgent: s.user_agent,
+        ipAddress: s.ip_address,
+        lastActivity: s.last_active_at,
+        isActive: true 
+      }))
+    };
+  }
 }
