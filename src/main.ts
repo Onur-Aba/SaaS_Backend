@@ -61,16 +61,24 @@ async function bootstrap() {
   app.use(json({ limit: '50kb' }));
   app.use(urlencoded({ extended: true, limit: '50kb' }));
 
-  // 4. KURUMSAL CORS AYARI
+  // --- YENİ CORS AYARI (Subdomain Destekli) ---
   app.enableCors({
-    origin: nodeEnv === 'production' 
-      ? [frontendUrl] 
-      : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080', 'http://localhost:3001'], 
-    
+    origin: function (origin, callback) {
+      // origin yoksa (Postman, mobil uygulama vb.) izin ver
+      if (!origin) return callback(null, true);
+      
+      // Eğer gelen istek localhost:3001 içeriyorsa (Örn: test.localhost:3001 veya localhost:3001) izin ver
+      if (origin.includes('localhost:3001')) {
+        return callback(null, true);
+      }
+      
+      callback(new Error('Not allowed by CORS'));
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true, 
     allowedHeaders: 'Content-Type, Accept, Authorization',
   });
+  // ------------------------------------------
 
   // Enterprise Validasyon Ayarı
   app.useGlobalPipes(

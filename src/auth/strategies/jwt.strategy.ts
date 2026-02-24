@@ -41,7 +41,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ...user, 
         activeTenantId: payload.activeTenantId || null,
         activeHierarchy: payload.activeHierarchy || null,   // <-- YENİ
-        activeProfession: payload.activeProfession || null  // <-- YENİ
+        activeProfession: payload.activeProfession || null,  // <-- YENİ
+        tokenFamily: payload.family // <-- YENİ: Gerçek oturumu bulmak için JWT'deki family değerini alıyoruz
     }; 
   }
 }

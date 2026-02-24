@@ -32,13 +32,25 @@ export class MembershipsService {
     private readonly outboxService: OutboxService,
   ) {}
 
-  async inviteUser(
+async inviteUser(
     inviterId: string,
     tenantId: string, 
-    email: string, 
-    hierarchyLevel: HierarchyLevel,
-    profession: Profession
+    email: string
+    // DÜZELTME 1: hierarchyLevel ve profession parametreleri buradan da silindi
   ) {
+    // 0. KRİTİK GÜVENLİK KONTROLÜ
+    const inviterMembership = await this.membershipRepo.findOne({
+      where: { user_id: inviterId, tenant_id: tenantId }
+    });
+
+    if (!inviterMembership) {
+      throw new ForbiddenException('Bu şirkette üye değilsiniz.');
+    }
+
+    if (inviterMembership.hierarchy_level !== HierarchyLevel.OWNER && inviterMembership.hierarchy_level !== HierarchyLevel.ADMIN) {
+      throw new ForbiddenException('Sadece Kurucu ve Yöneticiler (Admin) yeni üye davet edebilir.');
+    }
+
     // 1. ŞİRKET VE PLAN KONTROLÜ
     const tenant = await this.tenantRepo.findOne({
         where: { id: tenantId },
@@ -78,10 +90,11 @@ export class MembershipsService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
+    // DÜZELTME 2: GÜVENLİK MÜHRÜ (Herkes GUEST ve CLIENT olarak başlar)
     const invitation = this.invitationRepo.create({
       email,
-      hierarchy_level: hierarchyLevel,
-      profession: profession,
+      hierarchy_level: HierarchyLevel.GUEST, // ARTIK DIŞARIDAN DEĞİŞTİRİLEMEZ
+      profession: Profession.CLIENT,         // ARTIK DIŞARIDAN DEĞİŞTİRİLEMEZ
       token,
       expires_at: expiresAt,
       tenant_id: tenantId,
@@ -95,9 +108,9 @@ export class MembershipsService {
       type: 'SEND_INVITATION_EMAIL',
       payload: {
         email,
-        inviteLink: `http://localhost:3001/accept-invite?token=${token}`,
-        hierarchyLevel,
-        profession
+        inviteLink: `http://localhost:3001/tr/accept-invite?token=${token}`,
+        hierarchyLevel: HierarchyLevel.GUEST, // Mail servisine de sabit gidiyor
+        profession: Profession.CLIENT
       }
     });
 
@@ -161,6 +174,85 @@ export class MembershipsService {
     return { 
       message: 'Davet başarıyla kabul edildi. Şimdi giriş yapabilirsiniz.',
       email: user.email 
+    };
+  }
+
+  // --- MEVCUT METOTLARIN ALTINA EKLE ---
+  // --- YETKİ VE DEPARTMAN GÜNCELLEME METODU ---
+// --- YETKİ VE DEPARTMAN GÜNCELLEME METODU ---
+async updateRole(
+    requesterId: string, 
+    membershipId: string, 
+    newHierarchy?: HierarchyLevel, 
+    newProfession?: Profession
+  ) {
+    // 1. KRİTİK DÜZELTME: 'user' ilişkisini zorunlu olarak çekiyoruz!
+    const targetMembership = await this.membershipRepo.findOne({ 
+      where: { id: membershipId },
+      relations: ['user'] // <-- TypeORM'un user_id'yi gizlemesini engelliyoruz
+    });
+    
+    if (!targetMembership) throw new NotFoundException('Üyelik bulunamadı.');
+
+    // Hedef kullanıcının ID'sini garantili ve hatasız şekilde alıyoruz
+    const targetUserId = targetMembership.user?.id || targetMembership.user_id;
+
+    if (!targetUserId) {
+      throw new BadRequestException('Hedef üyenin kullanıcı kimliği okunamadı.');
+    }
+
+    // 2. ZORUNLU KİMLİK KONTROLÜ
+    const safeReqId = String(requesterId).toLowerCase().trim();
+    const safeTargetId = String(targetUserId).toLowerCase().trim();
+
+    // =========================================================================
+    // AŞILAMAZ GÜVENLİK DUVARI: KENDİ KENDİNE MÜDAHALE YASAĞI
+    // =========================================================================
+    if (safeReqId === safeTargetId) {
+      throw new ForbiddenException('Güvenlik ihlali: Kendi rolünüze veya departmanınıza müdahale edemezsiniz!');
+    }
+
+    const requesterMembership = await this.membershipRepo.findOne({
+      where: { user_id: requesterId, tenant_id: targetMembership.tenant_id }
+    });
+
+    if (!requesterMembership) {
+      throw new ForbiddenException('Bu çalışma alanında yetki işlemi yapamazsınız.');
+    }
+
+    // 3. ZORUNLU ROL NORMALİZASYONU
+    const reqRole = String(requesterMembership.hierarchy_level).toUpperCase() as HierarchyLevel;
+    const targetRole = String(targetMembership.hierarchy_level).toUpperCase() as HierarchyLevel;
+
+    const hierarchyWeight: Record<string, number> = {
+      OWNER: 1, ADMIN: 2, MANAGER: 3, DEPARTMENT_LEAD: 4, TEAM_LEAD: 5,
+      SENIOR: 6, MID_LEVEL: 7, JUNIOR: 8, GUEST: 9,
+    };
+
+    const reqWeight = hierarchyWeight[reqRole] || 99;
+    const targetWeight = hierarchyWeight[targetRole] || 99;
+
+    // 4. KENDİ RÜTBESİNE VE ÜSTÜNE MÜDAHALE KONTROLÜ
+    if (reqWeight >= targetWeight) {
+      throw new ForbiddenException('Sizinle aynı veya daha üst yetkiye sahip kişilere müdahale edemezsiniz.');
+    }
+
+    // 5. KİMSEYİ KENDİ RÜTBESİNE VEYA ÜSTÜNE ÇIKARAMAZ
+    if (newHierarchy) {
+      const newRoleWeight = hierarchyWeight[String(newHierarchy).toUpperCase()] || 99;
+      if (reqWeight >= newRoleWeight) {
+        throw new ForbiddenException('Kendi yetki seviyenizi veya daha üstünü başkasına veremezsiniz.');
+      }
+      targetMembership.hierarchy_level = newHierarchy;
+    }
+
+    if (newProfession) targetMembership.profession = newProfession;
+
+    await this.membershipRepo.save(targetMembership);
+
+    return { 
+      message: 'Yetki başarıyla güncellendi.', 
+      membership: targetMembership 
     };
   }
 }

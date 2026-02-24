@@ -54,7 +54,7 @@ export class AuthController {
   async getProfile(@Request() req) {
     // req.user sadece ID ve Email barındırır. 
     // Biz dashboard için gerekli olan tüm ilişkili tabloları (Sessions, Tenants, Plan) gerçek zamanlı çekiyoruz!
-    return this.authService.getDashboardData(req.user.id);
+    return this.authService.getDashboardData(req.user.id, req.user.tokenFamily);
   }
 
   @UseGuards(JwtAuthGuard) // Kimlik doğrulama zorunlu

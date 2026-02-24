@@ -616,7 +616,7 @@ export class AuthService {
     );
   }
   // --- GERÇEK DASHBOARD VERİSİNİ GETİR ---
-async getDashboardData(userId: string) {
+async getDashboardData(userId: string, currentTokenFamily?: string) {
     // 1. GERÇEK OTURUMLAR
     const sessions = await this.sessionRepository.find({
       where: { user_id: userId, is_revoked: false },
@@ -635,23 +635,37 @@ async getDashboardData(userId: string) {
       relations: ['plan'] // UserEntity'ye eklediğimiz plan ilişkisini çekiyoruz
     });
 
-    // Plan detaylarını JSONB (features) içinden çıkarıyoruz
+    // --- KRİTİK DÜZELTME BURADA ---
+    // Frontend'in formda kullanabilmesi için id alanını da ekliyoruz!
     const currentPlan = userWithPlan?.plan ? {
+      id: userWithPlan.plan.id, // <-- EKSİK OLAN SATIR BURASIYDI
       name: userWithPlan.plan.name,
       max_tenants: userWithPlan.plan.features?.max_tenants || 1
-    } : { name: 'FREE', max_tenants: 1 };
+    } : { 
+      id: null, 
+      name: 'Free', 
+      max_tenants: 1 
+    };
 
     return {
       id: userId,
       plan: currentPlan,
       tenants: memberships.map(m => m.tenant),
-      sessions: sessions.map(s => ({
-        id: s.id,
-        userAgent: s.user_agent,
-        ipAddress: s.ip_address,
-        lastActivity: s.last_active_at,
-        isActive: true 
-      }))
+      sessions: sessions.map(s => {
+        // UX İyileştirmesi: Uzun User-Agent yerine ayrıştırılmış cihaz bilgisini gösterelim
+        const browser = s.device_info?.browser || 'Bilinmeyen Tarayıcı';
+        const os = s.device_info?.os || 'İşletim Sistemi';
+        const displayAgent = s.user_agent.includes('node') ? 'Eski Node.js Oturumu' : `${browser} - ${os}`;
+
+        return {
+          id: s.id,
+          userAgent: displayAgent,
+          ipAddress: s.ip_address === '::1' || s.ip_address === '::ffff:127.0.0.1' ? 'Localhost' : s.ip_address,
+          lastActivity: s.last_active_at,
+          // KRİTİK DÜZELTME: Sadece giriş yapılan JWT'nin family'si ile eşleşen oturum Aktif sayılır!
+          isActive: s.token_family === currentTokenFamily
+        };
+      })
     };
   }
 }

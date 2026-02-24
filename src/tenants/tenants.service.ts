@@ -103,4 +103,11 @@ export class TenantsService {
   private mockPaymentGateway(planId: string): boolean {
     return true; 
   }
+  // Şirkete ait tüm üyeleri ve e-posta adreslerini (user ilişkisi ile) getirir
+  async getTenantMembers(tenantId: string) {
+    return this.dataSource.getRepository(MembershipEntity).find({
+      where: { tenant_id: tenantId },
+      relations: ['user'], // E-posta ve profil detaylarını çekmek için
+    });
+  }
 }

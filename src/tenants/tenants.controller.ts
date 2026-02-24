@@ -17,6 +17,9 @@ import { UserEntity } from '../users/entities/user.entity';
 import { RolesGuard } from '../common/guards/roles.guard'; 
 import { RequireHierarchy } from '../common/decorators/roles.decorator'; 
 import { HierarchyLevel } from '../common/enums/roles.enum';
+// Yeni GET Rotası
+  import { Get } from '@nestjs/common'; // En yukarıdaki importlara Get eklemeyi unutma
+
 
 @Controller('tenants')
 export class TenantsController {
@@ -42,5 +45,13 @@ export class TenantsController {
       }
 
       return this.tenantsService.update(id, updateTenantDto);
+  }
+  // Yeni GET Rotası
+  
+  
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/members')
+  async getMembers(@Param('id') id: string) {
+    return this.tenantsService.getTenantMembers(id);
   }
 }
